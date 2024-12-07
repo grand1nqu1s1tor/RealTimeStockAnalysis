@@ -1,0 +1,209 @@
+version: '3'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper
+    container_name: zookeeper
+    ports:
+     - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    restart: unless-stopped
+    networks:
+      - bridge
+
+  kafka:
+    image: confluentinc/cp-kafka
+    container_name: kafka
+    ports:
+      - "9094:9094"
+    expose:
+      - "9093"
+    environment:
+      KAFKA_ADVERTISED_HOST_NAME: "localhost"
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_CREATE_TOPICS: "stock-general-information:4:1, real-time-stock-prices:4:1"
+      KAFKA_LOG_RETENTION_HOURS: 1
+      KAFKA_LOG_RETENTION_BYTES: 4073741824
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_RETENTION_CHECK_INTERVAL_MS: 300000
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,OUTSIDE://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,OUTSIDE://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,OUTSIDE:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    networks:
+      - bridge
+
+
+  akhq:
+    image: tchiotludo/akhq
+    container_name: akhq
+    ports:
+      - "8090:8080"
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            docker-kafka-server:
+              properties:
+                bootstrap.servers: "kafka:9092"
+    depends_on:
+      - kafka
+    networks:
+      - bridge
+
+  spark-master:
+    image: docker.io/bitnami/spark:3.3
+    container_name: spark
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_USER=spark
+    ports:
+      - "8080:8080"  # Spark Web UI
+      - "7077:7077"
+    depends_on:
+      - kafka  # Ensure Kafka is up before starting Spark
+    volumes:
+      - ./:/app/ # Mount your Spark Streaming app
+    restart: unless-stopped
+    networks:
+      - bridge
+
+  spark-submit:
+    image: docker.io/bitnami/spark:3.3
+    container_name: spark_submit
+    environment:
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET}
+      INFLUXDB_MEASUREMENT: ${INFLUXDB_MEASUREMENT}
+      INFLUX_ORG: ${INFLUX_ORG}
+      INFLUX_TOKEN: ${INFLUX_TOKEN}
+    volumes:
+      - ./:/app/
+      - ./packages/postgresql-42.5.4.jar:/opt/bitnami/spark/jars/postgresql-42.5.4.jar
+    command: ["sh", "-c", "pip install -r /app/requirements.txt && spark-submit --jars /opt/bitnami/spark/jars/postgresql-42.5.4.jar --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.3.3 --master spark://spark-master:7077 /app/consumer/consumer.py"]
+    depends_on:
+      - spark-master
+    restart: unless-stopped
+    networks:
+      - bridge
+
+  spark-worker:
+    image: docker.io/bitnami/spark:3.3
+    # environment:
+    #   - SPARK_MODE=worker
+    #   - SPARK_MASTER_URL=spark://spark-master:7077
+    #   - SPARK_WORKER_MEMORY=1G
+    #   - SPARK_WORKER_CORES=1
+    #   - SPARK_RPC_AUTHENTICATION_ENABLED=no
+    #   - SPARK_RPC_ENCRYPTION_ENABLED=no
+    #   - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+    #   - SPARK_SSL_ENABLED=no
+    #   - SPARK_USER=spark
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: 1G
+      SPARK_WORKER_CORES: 1
+      SPARK_RPC_AUTHENTICATION_ENABLED: no
+      SPARK_RPC_ENCRYPTION_ENABLED: no
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: no
+      SPARK_SSL_ENABLED: no
+      SPARK_USER: spark
+    ports:
+      - "8081:8081"
+    networks:
+      - bridge
+
+  postgresql:
+    image: postgres:latest
+    container_name: postgresql
+    environment:
+      POSTGRES_DB: general_stock_info
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./script/initdb.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - bridge
+
+  influxdb:
+    image: influxdb:2.5
+    container_name: influxdb
+    platform: linux/amd64
+    restart: always
+    ports:
+      - 8086:8086
+    volumes:
+      - ./influxdb:/var/lib/influxdb2
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_USER}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_USER_PASSWORD}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+      INFLUXDB_ADMIN_USER: ${INFLUXDB_ADMIN_USER}
+      INFLUXDB_ADMIN_PASSWORD: ${INFLUXDB_ADMIN_USER_PASSWORD}
+    networks:
+      - bridge
+
+  grafana:
+    image: grafana/grafana-oss:8.4.3
+    volumes:
+      - grafana-storage:/var/lib/grafana:rw
+    depends_on:
+      - influxdb
+    ports:
+      - 3000:3000
+    networks:
+      - bridge
+
+  stock-python:
+    image: stock-python
+    container_name: stock-python
+    build: ./producer
+    ports:
+     - "5001:5000"
+    depends_on:
+      - postgresql
+    # environment:
+    #   - POSTGRES_USER=admin
+    #   - POSTGRES_PASSWORD=admin
+    #   - POSTGRES_HOST=postgresql
+    #   - POSTGRES_PORT=5432
+    #   - POSTGRES_DBNAME=stock-info
+    #   - STOCKS=AMZN,AAPL,MSFT,GOOGL
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DBNAME: ${POSTGRES_DBNAME}
+      STOCKS: ${STOCKS}
+    volumes:
+      - ./logs:/app/logs
+    networks:
+     - bridge
+
+volumes:
+  grafana-storage:
+
+networks:
+  bridge:
+
+
+
+
