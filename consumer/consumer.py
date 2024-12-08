@@ -51,6 +51,7 @@ if __name__ == "__main__":
         .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS) \
         .option("subscribe", KAFKA_TOPIC_NAME) \
         .load()
+
     # Debug: Check the schema and print initial rows
     logger.info(f"Kafka Schema: {stockDataframe.printSchema()}")
     stockDataframe.writeStream \
@@ -61,7 +62,6 @@ if __name__ == "__main__":
 
 
     stockDataframe = stockDataframe.select(col("value").cast("string").alias("data"))
-    logger.info("After casting 'value' to 'data'", stockDataframe)
     stockDataframe.writeStream \
         .format("console") \
         .option("truncate", "false") \
