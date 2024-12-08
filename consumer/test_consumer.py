@@ -1,11 +1,12 @@
 import sys
+from datetime import datetime
+import pytz
 sys.path.append("/app")
 
 import os
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import from_json, col, to_timestamp
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
-from datetime import datetime
 from logs.logger import setup_logger
 from InfluxDBWriter import InfluxDBWriter
 
@@ -38,7 +39,6 @@ stock_price_schema = StructType([
     StructField("close", DoubleType(), True),
     StructField("volume", DoubleType(), True)
 ])
-
 def process_batch(batch_df, batch_id):
     """
     Process each micro-batch and write data to InfluxDB.
@@ -59,13 +59,17 @@ def process_batch(batch_df, batch_id):
 
         # Filter out rows with null values in essential fields
         valid_rows = parsed_df.filter(
-            "open IS NOT NULL AND high IS NOT NULL AND low IS NOT NULL AND close IS NOT NULL AND volume IS NOT NULL"
+            "date IS NOT NULL AND open IS NOT NULL AND high IS NOT NULL AND low IS NOT NULL AND close IS NOT NULL AND volume IS NOT NULL"
         )
 
         # Write each row to InfluxDB
         for row in valid_rows.collect():
-            # Convert timestamp to nanoseconds
-            timestamp_ns = int(row["date"].timestamp() * 1e9) if row["date"] else None
+            if row["date"]:
+                # `to_timestamp` has already converted `date` to a `datetime` object
+                timestamp_s = int(row["date"].timestamp())  # Convert to seconds
+            else:
+                timestamp_s = None
+
             tags = {"stock": row["stock"]}
             fields = {
                 "open": row["open"],
@@ -75,9 +79,10 @@ def process_batch(batch_df, batch_id):
                 "volume": row["volume"]
             }
 
+            # Write to InfluxDB
             try:
-                logger.info(f"Writing to InfluxDB: timestamp={timestamp_ns}, tags={tags}, fields={fields}")
-                influxdb_writer.process(timestamp_ns, tags, fields)
+                logger.info(f"Writing to InfluxDB: timestamp={timestamp_s}, tags={tags}, fields={fields}")
+                influxdb_writer.process(timestamp_s, tags, fields)
             except Exception as e:
                 logger.error(f"Failed to write to InfluxDB: {e}")
     except Exception as e:
