@@ -87,7 +87,7 @@ def retrieve_real_time_data(producer, stock_symbol, kafka_topic, logger):
             start_time = end_time - timedelta(days=1)
 
             for symbol_index, sym in enumerate(stock_symbols):
-                real_time_data = yf.download(sym, start=start_time, end=end_time, interval="2m")
+                real_time_data = yf.download(sym, start=start_time, end=end_time, interval="1m")
                 real_time_data.columns = [c[0] for c in real_time_data.columns]
                 print(real_time_data.columns)
 
@@ -129,7 +129,7 @@ def retrieve_real_time_data(producer, stock_symbol, kafka_topic, logger):
                     'volume': None
                 }
                 send_to_kafka(producer, kafka_topic, sym, symbol_index, null_data_point, logger)
-        t.sleep(3)
+        t.sleep(1)
 
 def get_stock_details(stock_symbol, logger):
     stock_symbols = stock_symbol.split(",") if stock_symbol else []
