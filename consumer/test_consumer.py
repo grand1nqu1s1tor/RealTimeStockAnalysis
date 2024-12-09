@@ -115,7 +115,7 @@ if __name__ == "__main__":
         spark.readStream.format("kafka")
         .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
         .option("subscribe", KAFKA_TOPIC_NAME)
-        .option("startingOffsets", "earliest")
+        .option("startingOffsets", "latest")
         .load()
     )
 
@@ -132,7 +132,6 @@ if __name__ == "__main__":
     query = (
         parsed_stream.writeStream.foreachBatch(process_batch)
         .outputMode("append")
-        .option("checkpointLocation", "/tmp/spark-checkpoint")
         .start()
     )
 
