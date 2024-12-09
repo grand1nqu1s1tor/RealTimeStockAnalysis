@@ -13,7 +13,7 @@ import time as t
 
 load_dotenv()
 
-def send_to_kafka(producer, topic, key, partition, message):
+def send_to_kafka(producer, topic, key, partition, message, logger):
     try:
         # print("sent to kafka", message)
         #producer.produce(topic, key=key, partition=partition, value=json.dumps(message).encode("utf-8"))
@@ -65,7 +65,7 @@ def retrieve_historical_data(producer, stock_symbol, kafka_topic, logger):
                 }
 
                 logger.info(f"Sending data to Kafka: {historical_data_point}")
-                send_to_kafka(producer, kafka_topic, stock_symbol, 0, historical_data_point)
+                send_to_kafka(producer, kafka_topic, stock_symbol, 0, historical_data_point, logger)
 
             logger.info(f"Successfully sent historical data for {stock_symbol} to Kafka topic {kafka_topic}")
 
@@ -74,39 +74,53 @@ def retrieve_historical_data(producer, stock_symbol, kafka_topic, logger):
 
 
 def retrieve_real_time_data(producer, stock_symbol, kafka_topic, logger):
-    # Define the stock symbol for real-time data
-    retrieve_historical_data(producer, stock_symbol, kafka_topic, logger)
     stock_symbols = stock_symbol.split(",") if stock_symbol else []
     if not stock_symbols:
-        logger.error(f"No stock symbols provided in the environment variable.")
+        logger.error("No stock symbols provided in the environment variable.")
         exit(1)
+
     while True:
-        # Fetch real-time data for the last 1 minute
         current_time = datetime.now()
         is_market_open_bool = is_stock_market_open(current_time)
         if is_market_open_bool:
-            end_time = datetime.now() 
-            start_time = end_time - timedelta(days= 1)
-            for symbol_index, stock_symbol in enumerate(stock_symbols):
-                real_time_data = yf.download(stock_symbol, start=start_time, end=end_time, interval="2m")
+            end_time = datetime.now()
+            start_time = end_time - timedelta(days=1)
+
+            for symbol_index, sym in enumerate(stock_symbols):
+                real_time_data = yf.download(sym, start=start_time, end=end_time, interval="2m")
+                real_time_data.columns = [c[0] for c in real_time_data.columns]
+                print(real_time_data.columns)
+
+
+
                 if not real_time_data.empty:
-                    # Convert and send the latest real-time data point to Kafka
                     latest_data_point = real_time_data.iloc[-1]
+                    print(latest_data_point)
+                    # Convert values to Python native types
+                    date_str = latest_data_point.name.isoformat() if hasattr(latest_data_point.name, 'isoformat') else str(latest_data_point.name)
+                    open_val = float(latest_data_point['Open']) if not pd.isnull(latest_data_point['Open']) else None
+                    high_val = float(latest_data_point['High']) if not pd.isnull(latest_data_point['High']) else None
+                    low_val = float(latest_data_point['Low']) if not pd.isnull(latest_data_point['Low']) else None
+                    close_val = float(latest_data_point['Close']) if not pd.isnull(latest_data_point['Close']) else None
+                    volume_val = float(latest_data_point['Volume']) if not pd.isnull(latest_data_point['Volume']) else None
+
                     real_time_data_point = {
-                        'stock': stock_symbol,
-                        'date': latest_data_point.name.isoformat(),
-                        'open': latest_data_point['Open'],
-                        'high': latest_data_point['High'],
-                        'low': latest_data_point['Low'],
-                        'close': latest_data_point['Close'],
-                        'volume': latest_data_point['Volume']
+                        'stock': str(sym),
+                        'date': date_str,
+                        'open': open_val,
+                        'high': high_val,
+                        'low': low_val,
+                        'close': close_val,
+                        'volume': volume_val
                     }
-                    send_to_kafka(producer, kafka_topic, stock_symbol, symbol_index, real_time_data_point)
+
+                    send_to_kafka(producer, kafka_topic, sym, symbol_index, real_time_data_point, logger)
                     logger.info(f"Stock value retrieved and pushed to kafka topic {kafka_topic}")
         else:
-            for symbol_index, stock_symbol in enumerate(stock_symbols):
+            # Market closed scenario
+            for symbol_index, sym in enumerate(stock_symbols):
                 null_data_point = {
-                    'stock': stock_symbol,
+                    'stock': sym,
                     'date': current_time.isoformat(),
                     'open': None,
                     'high': None,
@@ -114,9 +128,8 @@ def retrieve_real_time_data(producer, stock_symbol, kafka_topic, logger):
                     'close': None,
                     'volume': None
                 }
-                send_to_kafka(producer, kafka_topic, stock_symbol, symbol_index, null_data_point)
-            # send_to_kafka(producer, kafka_topic, null_data_point)
-        t.sleep(3) 
+                send_to_kafka(producer, kafka_topic, sym, symbol_index, null_data_point, logger)
+        t.sleep(3)
 
 def get_stock_details(stock_symbol, logger):
     stock_symbols = stock_symbol.split(",") if stock_symbol else []
@@ -129,7 +142,7 @@ def get_stock_details(stock_symbol, logger):
     stock_details = []
     for stock_symbol in stock_symbols:
         try:
-        # Create a Ticker object for the specified stock symbol
+            # Create a Ticker object for the specified stock symbol
             ticker = yf.Ticker(stock_symbol)
 
             # Retrieve general stock information
@@ -173,5 +186,3 @@ def is_stock_market_open(current_datetime=None):
         return True
     else:
         return False
-
-

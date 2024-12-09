@@ -8,7 +8,7 @@ from confluent_kafka import Producer
 from dotenv import load_dotenv
 from logs.logger import setup_logger
 
-from producer_utils import retrieve_real_time_data, get_stock_details, retrieve_historical_data
+from producer_utils import retrieve_real_time_data, retrieve_historical_data
 from script.utils import load_environment_variables
 load_dotenv()
 
@@ -22,7 +22,7 @@ producer = Producer(kafka_config)
 if __name__ == '__main__':
     logger = setup_logger(__name__, 'producer.log')
     env_vars = load_environment_variables()
-    retrieve_historical_data(producer,
+    retrieve_real_time_data(producer,
                             env_vars.get("STOCKS"),
                             env_vars.get("STOCK_PRICE_KAFKA_TOPIC"),
                             logger

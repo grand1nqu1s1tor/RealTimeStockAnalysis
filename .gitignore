@@ -1,3 +1,7 @@
 .env
 _init__.py
 venv/
+/influxdb/engine/
+/influxdb/influxd.bolt
+/influxdb/influxd.sqlite
+.idea/vcs.xml
